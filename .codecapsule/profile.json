@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1",
+  "tool": "opencode",
+  "imageName": "codecapsule/opencode:latest",
+  "containerWorkdir": "/workspace",
+  "opencodeVersion": "latest",
+  "statePath": ".codecapsule/state/opencode",
+  "cachePath": ".codecapsule/cache/opencode",
+  "configPath": ".codecapsule/config/opencode",
+  "network": "bridge",
+  "imports": {
+    "settings": false,
+    "auth": false,
+    "skills": false,
+    "plugins": false,
+    "agents": false,
+    "commands": false,
+    "tools": false,
+    "themes": false
+  },
+  "security": {
+    "allowPrivileged": false,
+    "allowDockerSocket": false,
+    "allowHostHomeMount": false,
+    "allowSshAgent": false,
+    "envAllowlist": [
+      "TERM"
+    ]
+  }
+}

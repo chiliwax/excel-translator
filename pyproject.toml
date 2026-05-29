@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xlsx-ai-translate"
+version = "0.1.0"
+description = "Translate multi-sheet XLSX files with an AI provider while reusing duplicate cell translations."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "litellm>=1.60.0",
+  "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+translate-xlsx = "xlsx_ai_translate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["xlsx_ai_translate*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
