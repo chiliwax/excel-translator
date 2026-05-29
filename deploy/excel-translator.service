@@ -1,0 +1,26 @@
+[Unit]
+Description=Excel Translator FastAPI Application
+After=network.target
+
+[Service]
+Type=simple
+User=chiliwa
+Group=chiliwa
+WorkingDirectory=/home/chiliwa/excelTranslator
+ExecStart=/home/chiliwa/excelTranslator/.venv/bin/uvicorn web.app:app --host 127.0.0.1 --port 8000
+Environment=ENV_FILE=/home/chiliwa/excelTranslator/.env
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/home/chiliwa/excelTranslator/.data
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=excel-translator
+
+[Install]
+WantedBy=multi-user.target

@@ -9,12 +9,17 @@ description = "Translate multi-sheet XLSX files with an AI provider while reusin
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "fastapi>=0.115.0",
+  "jinja2>=3.1.0",
   "litellm>=1.60.0",
   "openpyxl>=3.1.0",
+  "python-multipart>=0.0.9",
+  "uvicorn[standard]>=0.30.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "httpx>=0.27.0",
   "pytest>=8.0",
 ]
 
@@ -23,7 +28,10 @@ translate-xlsx = "xlsx_ai_translate.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["xlsx_ai_translate*"]
+include = ["xlsx_ai_translate*", "web*"]
+
+[tool.setuptools.package-data]
+web = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

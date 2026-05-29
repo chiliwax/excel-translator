@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Translation Job</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+    <script src="{{ url_for('static', path='app.js') }}" defer></script>
+  </head>
+  <body data-job-id="{{ job.id }}">
+    <main class="shell narrow">
+      <a class="back" href="/">New translation</a>
+      <section class="card job-card">
+        <p class="eyebrow">Job {{ job.id }}</p>
+        <h1 id="job-title">{{ job.status|capitalize }}</h1>
+        <p id="job-message" class="lede">{{ job.message }}</p>
+
+        <div class="progress">
+          <div id="progress-bar" class="progress-bar" style="width: {{ job.progress_percent }}%"></div>
+        </div>
+        <p id="progress-text" class="muted">{{ job.progress_current }}/{{ job.progress_total }} batches</p>
+
+        <dl class="details">
+          <div><dt>File</dt><dd id="input-filename">{{ job.input_filename }}</dd></div>
+          <div><dt>Target</dt><dd id="target-language">{{ job.target_language }}</dd></div>
+          <div><dt>Model</dt><dd id="model">{{ job.model }}</dd></div>
+          <div><dt>Concurrency</dt><dd id="concurrency">{{ job.concurrency }}</dd></div>
+        </dl>
+
+        <pre id="stats" class="stats" hidden></pre>
+        <p id="error" class="error" hidden></p>
+        <a id="download" class="button" href="{{ job.download_url or '#' }}" {% if job.status != 'done' %}hidden{% endif %}>Download translated workbook</a>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>XLSX AI Translate</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">AI Workbook Translation</p>
+        <h1>Translate Excel files without losing formulas or repeated-text consistency.</h1>
+        <p class="lede">Upload an `.xlsx`, choose your target language, and download a translated copy when the background job finishes.</p>
+      </section>
+
+      <form class="card form" action="/jobs" method="post" enctype="multipart/form-data">
+        <label class="field wide">
+          <span>Excel file</span>
+          <input type="file" name="file" accept=".xlsx" required>
+          <small>Maximum upload: {{ max_upload_mb }} MB</small>
+        </label>
+
+        <label class="field">
+          <span>Target language</span>
+          <input name="target_language" value="en" required>
+        </label>
+
+        <label class="field">
+          <span>Source language</span>
+          <input name="source_language" value="auto">
+        </label>
+
+        <label class="field wide">
+          <span>Exclude sheets</span>
+          <input name="exclude_sheets" placeholder="Metadata, Do Not Translate">
+          <small>Comma-separated sheet names.</small>
+        </label>
+
+        <label class="check wide">
+          <input type="checkbox" name="translate_sheet_names" value="true" checked>
+          <span>Translate worksheet tab names</span>
+        </label>
+
+        <details class="advanced wide">
+          <summary>Advanced settings</summary>
+          <div class="advanced-grid">
+            <label class="field">
+              <span>Model</span>
+              <input name="model" value="{{ default_model }}">
+            </label>
+            <label class="field">
+              <span>Batch size</span>
+              <input type="number" name="batch_size" value="50" min="1">
+            </label>
+            <label class="field">
+              <span>Max batch chars</span>
+              <input type="number" name="max_batch_chars" value="12000" min="1">
+            </label>
+            <label class="field">
+              <span>Concurrency</span>
+              <input type="number" name="concurrency" value="8" min="1">
+            </label>
+            <label class="field">
+              <span>RPM</span>
+              <input type="number" name="rpm" value="500" min="1">
+            </label>
+            <label class="field">
+              <span>TPM</span>
+              <input type="number" name="tpm" value="200000" min="1">
+            </label>
+            <label class="field">
+              <span>Request timeout</span>
+              <input type="number" name="request_timeout" value="120" min="1">
+            </label>
+          </div>
+        </details>
+
+        <button class="button wide" type="submit">Start translation</button>
+      </form>
+    </main>
+  </body>
+</html>

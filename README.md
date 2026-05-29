@@ -115,3 +115,22 @@ Environment variables already set in your shell take priority over values in `.e
 ```bash
 pytest
 ```
+
+## Web UI
+
+Run the FastAPI web interface locally:
+
+```bash
+pip install -e '.[dev]'
+uvicorn web.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000`, upload an `.xlsx`, and download the translated result when the job finishes.
+
+The web app stores job files under `.data/jobs` by default. Override that with:
+
+```bash
+export XLSX_TRANSLATOR_DATA_DIR=/path/to/data
+```
+
+Deployment examples are available in `deploy/excel-translator.service` and `deploy/nginx.conf`.

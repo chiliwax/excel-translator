@@ -215,8 +215,6 @@ def _translate_batches(
 
     def translate_batch(batch_index: int, batch: Sequence[str]) -> tuple[int, list[str]]:
         limiter.acquire(_estimate_tokens_for_batch(batch))
-        if progress is not None:
-            progress(batch_index + 1, batch_count)
         translations = client.translate_batch(
             batch,
             source_language=source_language,
@@ -235,9 +233,13 @@ def _translate_batches(
             executor.submit(translate_batch, batch_index, batch)
             for batch_index, batch in enumerate(batches)
         ]
+        completed_count = 0
         for future in as_completed(futures):
             batch_index, translations = future.result()
             results[batch_index] = translations
+            completed_count += 1
+            if progress is not None:
+                progress(completed_count, batch_count)
 
     missing = [index + 1 for index, result in enumerate(results) if result is None]
     if missing:
@@ -410,4 +412,4 @@ def _escape_formula_sheet_title(title: str) -> str:
 
 
 def stderr_progress(batch_index: int, batch_count: int) -> None:
-    print(f"Translating batch {batch_index}/{batch_count}...", file=sys.stderr)
+    print(f"Finished batch {batch_index}/{batch_count}...", file=sys.stderr)
