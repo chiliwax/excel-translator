@@ -125,9 +125,9 @@ pip install -e '.[dev]'
 uvicorn web.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000`, upload an `.xlsx`, and download the translated result when the job finishes.
+Open `http://127.0.0.1:8000`, upload an `.xlsx`, inspect its sheet list, select any sheets to exclude, and download the translated result when the job finishes.
 
-The web app stores job files under `.data/jobs` by default. Override that with:
+The web app stores staged uploads and job files under `.data` by default. Override that with:
 
 ```bash
 export XLSX_TRANSLATOR_DATA_DIR=/path/to/data

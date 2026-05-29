@@ -1,4 +1,66 @@
 const jobId = document.body.dataset.jobId;
+const inspectForm = document.getElementById("inspect-form");
+
+if (inspectForm) {
+  inspectForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const message = document.getElementById("inspect-message");
+    const button = document.getElementById("inspect-button");
+    const jobForm = document.getElementById("job-form");
+    const data = new FormData(inspectForm);
+
+    message.textContent = "Inspecting workbook...";
+    button.disabled = true;
+    jobForm.hidden = true;
+
+    try {
+      const response = await fetch("/inspect", { method: "POST", body: data });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Could not inspect workbook.");
+
+      document.getElementById("upload-id").value = payload.upload_id;
+      document.getElementById("selected-filename").textContent = payload.filename;
+      renderSheetList(payload.sheets || []);
+      message.textContent = `Found ${payload.sheets.length} sheet${payload.sheets.length === 1 ? "" : "s"}. Select exclusions below.`;
+      jobForm.hidden = false;
+      jobForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function renderSheetList(sheets) {
+  const list = document.getElementById("sheet-list");
+  list.textContent = "";
+
+  if (!sheets.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No sheets found.";
+    list.append(empty);
+    return;
+  }
+
+  for (const sheet of sheets) {
+    const label = document.createElement("label");
+    label.className = "sheet-option";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "exclude_sheet_names";
+    checkbox.value = sheet;
+
+    const text = document.createElement("span");
+    text.textContent = sheet;
+
+    label.append(checkbox, text);
+    list.append(label);
+  }
+}
 
 function updateJob(job) {
   document.title = `${job.status} - Translation Job`;
@@ -23,6 +85,8 @@ function updateJob(job) {
   if (job.download_url) {
     download.hidden = false;
     download.href = job.download_url;
+  } else {
+    download.hidden = true;
   }
 
   return job.status === "done" || job.status === "error";

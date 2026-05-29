@@ -18,13 +18,38 @@ def test_index_page_renders(tmp_path):
         response = client.get("/")
 
     assert response.status_code == 200
+    assert "Inspect workbook sheets" in response.text
     assert "Start translation" in response.text
+
+
+def test_inspect_upload_returns_sheet_names(tmp_path):
+    web_app.reset_for_tests(tmp_path / "data")
+
+    with TestClient(web_app.app) as client:
+        response = client.post(
+            "/inspect",
+            files={
+                "file": (
+                    "document.xlsx",
+                    _workbook_bytes(["Keep", "Skip"]),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["filename"] == "document.xlsx"
+    assert payload["sheets"] == ["Keep", "Skip"]
+    assert len(payload["upload_id"]) == 32
 
 
 def test_job_upload_runs_background_translation_and_downloads(tmp_path, monkeypatch):
     web_app.reset_for_tests(tmp_path / "data")
+    captured_kwargs = {}
 
     def fake_translate_workbook(input_path, output_path, **kwargs):
+        captured_kwargs.update(kwargs)
         progress = kwargs.get("progress")
         if progress is not None:
             progress(1, 2)
@@ -42,20 +67,27 @@ def test_job_upload_runs_background_translation_and_downloads(tmp_path, monkeypa
     monkeypatch.setattr(web_app, "translate_workbook", fake_translate_workbook)
 
     with TestClient(web_app.app) as client:
+        inspect = client.post(
+            "/inspect",
+            files={
+                "file": (
+                    "document.xlsx",
+                    _workbook_bytes(["Keep", "Skip"]),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+        assert inspect.status_code == 200
+
         response = client.post(
             "/jobs",
             data={
+                "upload_id": inspect.json()["upload_id"],
                 "target_language": "en",
                 "source_language": "auto",
                 "model": "openai/gpt-4o-mini",
                 "translate_sheet_names": "true",
-            },
-            files={
-                "file": (
-                    "document.xlsx",
-                    _workbook_bytes(),
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+                "exclude_sheet_names": "Skip",
             },
             follow_redirects=False,
         )
@@ -68,6 +100,7 @@ def test_job_upload_runs_background_translation_and_downloads(tmp_path, monkeypa
         assert status["status"] == "done"
         assert status["progress_percent"] == 100
         assert status["stats"]["sheet_titles_translated"] == 1
+        assert captured_kwargs["exclude_sheets"] == ["Skip"]
 
         download = client.get(f"/jobs/{job_id}/download")
         assert download.status_code == 200
@@ -79,17 +112,50 @@ def test_rejects_non_xlsx_upload(tmp_path):
 
     with TestClient(web_app.app) as client:
         response = client.post(
-            "/jobs",
-            data={"target_language": "en"},
+            "/inspect",
             files={"file": ("document.txt", b"hello", "text/plain")},
         )
 
     assert response.status_code == 400
 
 
-def _workbook_bytes() -> BytesIO:
+def test_download_button_is_hidden_until_ready(tmp_path):
+    web_app.reset_for_tests(tmp_path / "data")
+    job = web_app.JobState(
+        id="a" * 32,
+        status="queued",
+        input_filename="document.xlsx",
+        source_language="auto",
+        target_language="en",
+        model="openai/gpt-4o-mini",
+        exclude_sheets=[],
+        translate_sheet_names=True,
+        batch_size=50,
+        max_batch_chars=12_000,
+        concurrency=8,
+        rpm=500,
+        tpm=200_000,
+        request_timeout=120,
+    )
+    web_app._set_job(job)
+    web_app._write_job_file(job)
+
+    with TestClient(web_app.app) as client:
+        page = client.get(f"/jobs/{job.id}")
+        css = client.get("/static/app.css")
+
+    assert 'id="download"' in page.text
+    assert "hidden" in page.text
+    assert "[hidden]" in css.text
+
+
+def _workbook_bytes(sheet_names: list[str] | None = None) -> BytesIO:
     workbook = Workbook()
+    names = sheet_names or ["Sheet"]
+    workbook.active.title = names[0]
     workbook.active["A1"] = "Bonjour"
+    for name in names[1:]:
+        workbook.create_sheet(name)["A1"] = "Bonjour"
     stream = BytesIO()
     workbook.save(stream)
     stream.seek(0)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -26,14 +27,17 @@ APP_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_ROOT.parent
 DATA_DIR = Path(os.environ.get("XLSX_TRANSLATOR_DATA_DIR", PROJECT_ROOT / ".data")).resolve()
 JOBS_DIR = DATA_DIR / "jobs"
+UPLOADS_DIR = DATA_DIR / "uploads"
 MAX_UPLOAD_BYTES = int(os.environ.get("XLSX_TRANSLATOR_MAX_UPLOAD_MB", "100")) * 1024 * 1024
 JOB_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.environ.get("XLSX_TRANSLATOR_WEB_WORKERS", "2")))
+_SAFE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     env_file = Path(os.environ.get("ENV_FILE", PROJECT_ROOT / ".env"))
     _load_env_file(env_file)
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -102,13 +106,42 @@ def index(request: Request) -> HTMLResponse:
     )
 
 
+@app.post("/inspect")
+def inspect_workbook(file: Annotated[UploadFile, File()]) -> JSONResponse:
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Upload must be a .xlsx file.")
+
+    upload_id = uuid.uuid4().hex
+    upload_dir = UPLOADS_DIR / upload_id
+    upload_dir.mkdir(parents=True)
+    input_path = upload_dir / "input.xlsx"
+    _save_upload(file, input_path)
+
+    try:
+        sheets = _read_sheet_names(input_path)
+    except Exception as exc:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"Could not inspect workbook: {exc}") from exc
+
+    metadata = {
+        "upload_id": upload_id,
+        "filename": file.filename,
+        "sheets": sheets,
+        "created_at": _now_iso(),
+    }
+    (upload_dir / "upload.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return JSONResponse(metadata)
+
+
 @app.post("/jobs")
 def create_job(
-    file: Annotated[UploadFile, File()],
     target_language: Annotated[str, Form()],
+    file: Annotated[UploadFile | None, File()] = None,
+    upload_id: Annotated[str, Form()] = "",
     source_language: Annotated[str, Form()] = "auto",
     model: Annotated[str, Form()] = "",
     exclude_sheets: Annotated[str, Form()] = "",
+    exclude_sheet_names: Annotated[list[str] | None, Form()] = None,
     translate_sheet_names: Annotated[bool, Form()] = False,
     batch_size: Annotated[int, Form()] = 50,
     max_batch_chars: Annotated[int, Form()] = 12_000,
@@ -117,8 +150,6 @@ def create_job(
     tpm: Annotated[int, Form()] = 200_000,
     request_timeout: Annotated[float, Form()] = 120.0,
 ) -> RedirectResponse:
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Upload must be a .xlsx file.")
     if not target_language.strip():
         raise HTTPException(status_code=400, detail="Target language is required.")
 
@@ -135,18 +166,24 @@ def create_job(
     job_dir.mkdir(parents=True)
 
     input_path = job_dir / "input.xlsx"
-    output_filename = f"{Path(file.filename).stem}.translated.xlsx"
+    staged_input_path, input_filename = _resolve_job_input(upload_id, file)
+    output_filename = f"{Path(input_filename).stem}.translated.xlsx"
     output_path = job_dir / output_filename
-    _save_upload(file, input_path)
+    shutil.copyfile(staged_input_path, input_path)
+
+    parsed_excluded_sheets = _parse_exclude_sheets(exclude_sheets)
+    for sheet_name in exclude_sheet_names or []:
+        if sheet_name and sheet_name not in parsed_excluded_sheets:
+            parsed_excluded_sheets.append(sheet_name)
 
     job = JobState(
         id=job_id,
         status="queued",
-        input_filename=file.filename,
+        input_filename=input_filename,
         source_language=source_language.strip() or "auto",
         target_language=target_language.strip(),
         model=model.strip() or os.environ.get("XLSX_TRANSLATOR_MODEL", "openai/gpt-4o-mini"),
-        exclude_sheets=_parse_exclude_sheets(exclude_sheets),
+        exclude_sheets=parsed_excluded_sheets,
         translate_sheet_names=translate_sheet_names,
         batch_size=batch_size,
         max_batch_chars=max_batch_chars,
@@ -257,6 +294,43 @@ def _parse_exclude_sheets(value: str) -> list[str]:
     return [item.strip() for item in value.replace("\n", ",").split(",") if item.strip()]
 
 
+def _read_sheet_names(path: Path) -> list[str]:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path, read_only=True, data_only=False)
+    return list(workbook.sheetnames)
+
+
+def _resolve_job_input(upload_id: str, file: UploadFile | None) -> tuple[Path, str]:
+    if upload_id:
+        safe_upload_id = _safe_data_id(upload_id)
+        upload_dir = UPLOADS_DIR / safe_upload_id
+        input_path = upload_dir / "input.xlsx"
+        metadata_path = upload_dir / "upload.json"
+        if not input_path.exists() or not metadata_path.exists():
+            raise HTTPException(status_code=404, detail="Inspected upload was not found.")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        return input_path, metadata.get("filename") or "workbook.xlsx"
+
+    if file is None or not file.filename:
+        raise HTTPException(status_code=400, detail="Inspect and select a workbook before starting translation.")
+    if not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Upload must be a .xlsx file.")
+
+    temp_upload_id = uuid.uuid4().hex
+    upload_dir = UPLOADS_DIR / temp_upload_id
+    upload_dir.mkdir(parents=True)
+    input_path = upload_dir / "input.xlsx"
+    _save_upload(file, input_path)
+    return input_path, file.filename
+
+
+def _safe_data_id(value: str) -> str:
+    if not _SAFE_ID.fullmatch(value):
+        raise HTTPException(status_code=400, detail="Invalid upload id.")
+    return value
+
+
 def _validate_positive(name: str, value: int) -> None:
     if value < 1:
         raise HTTPException(status_code=400, detail=f"{name} must be at least 1.")
@@ -316,11 +390,13 @@ def _stats_dict(stats: TranslationStats) -> dict[str, object]:
 
 
 def reset_for_tests(data_dir: Path) -> None:
-    global DATA_DIR, JOBS_DIR
+    global DATA_DIR, JOBS_DIR, UPLOADS_DIR
     with _jobs_lock:
         _jobs.clear()
     DATA_DIR = data_dir.resolve()
     JOBS_DIR = DATA_DIR / "jobs"
+    UPLOADS_DIR = DATA_DIR / "uploads"
     if DATA_DIR.exists():
         shutil.rmtree(DATA_DIR)
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)

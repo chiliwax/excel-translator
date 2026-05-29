@@ -5,21 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>XLSX AI Translate</title>
     <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+    <script src="{{ url_for('static', path='app.js') }}" defer></script>
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">AI Workbook Translation</p>
         <h1>Translate Excel files without losing formulas or repeated-text consistency.</h1>
-        <p class="lede">Upload an `.xlsx`, choose your target language, and download a translated copy when the background job finishes.</p>
+        <p class="lede">Upload an `.xlsx`, inspect its sheets, select any tabs to exclude, and download a translated copy when the background job finishes.</p>
       </section>
 
-      <form class="card form" action="/jobs" method="post" enctype="multipart/form-data">
+      <form id="inspect-form" class="card form" action="/inspect" method="post" enctype="multipart/form-data">
         <label class="field wide">
           <span>Excel file</span>
-          <input type="file" name="file" accept=".xlsx" required>
+          <input id="workbook-file" type="file" name="file" accept=".xlsx" required>
           <small>Maximum upload: {{ max_upload_mb }} MB</small>
         </label>
+
+        <button id="inspect-button" class="button wide" type="submit">Inspect workbook sheets</button>
+        <p id="inspect-message" class="muted wide" role="status"></p>
+      </form>
+
+      <form id="job-form" class="card form stacked-card" action="/jobs" method="post" hidden>
+        <input id="upload-id" type="hidden" name="upload_id">
+
+        <div class="wide selected-file">
+          <span>Selected workbook</span>
+          <strong id="selected-filename"></strong>
+        </div>
 
         <label class="field">
           <span>Target language</span>
@@ -31,11 +44,11 @@
           <input name="source_language" value="auto">
         </label>
 
-        <label class="field wide">
-          <span>Exclude sheets</span>
-          <input name="exclude_sheets" placeholder="Metadata, Do Not Translate">
-          <small>Comma-separated sheet names.</small>
-        </label>
+        <fieldset class="sheet-picker wide">
+          <legend>Exclude sheets</legend>
+          <p class="muted">Select sheets that should stay unchanged.</p>
+          <div id="sheet-list" class="sheet-list"></div>
+        </fieldset>
 
         <label class="check wide">
           <input type="checkbox" name="translate_sheet_names" value="true" checked>
