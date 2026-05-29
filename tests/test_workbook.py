@@ -46,6 +46,7 @@ def test_translates_unique_strings_once_and_preserves_formulas(tmp_path):
         target_language="fr",
         batch_size=1,
         concurrency=1,
+        translate_sheet_names=False,
     )
 
     translated = load_workbook(output_path, data_only=False)
@@ -84,6 +85,7 @@ def test_excludes_requested_sheets_and_reports_missing_names(tmp_path):
         client=client,
         target_language="es",
         exclude_sheets=["Skip", "Missing"],
+        translate_sheet_names=False,
     )
 
     translated = load_workbook(output_path, data_only=False)
@@ -110,7 +112,13 @@ def test_translates_all_sheets_by_default(tmp_path):
     workbook.save(input_path)
 
     client = FakeTranslationClient()
-    translate_workbook(input_path, output_path, client=client, target_language="de")
+    translate_workbook(
+        input_path,
+        output_path,
+        client=client,
+        target_language="de",
+        translate_sheet_names=False,
+    )
 
     translated = load_workbook(output_path, data_only=False)
 
@@ -155,6 +163,7 @@ def test_parallel_translation_respects_concurrency_and_maps_results(tmp_path):
         concurrency=2,
         requests_per_minute=500,
         tokens_per_minute=200_000,
+        translate_sheet_names=False,
     )
 
     translated = load_workbook(output_path, data_only=False)
@@ -171,6 +180,92 @@ def test_parallel_translation_respects_concurrency_and_maps_results(tmp_path):
 
 def test_estimate_tokens_for_batch_accounts_for_output():
     assert _estimate_tokens_for_batch(["a" * 400]) >= 200
+
+
+def test_translates_sheet_titles_with_same_cache_and_updates_formula_references(tmp_path):
+    input_path = tmp_path / "input.xlsx"
+    output_path = tmp_path / "output.xlsx"
+
+    workbook = Workbook()
+    data = workbook.active
+    data.title = "Data"
+    summary = workbook.create_sheet("Summary")
+    data["A1"] = "Data"
+    summary["A1"] = "=Data!A1"
+    workbook.save(input_path)
+
+    client = MappingTranslationClient({"Data": "Donnees", "Summary": "Resume"})
+    stats = translate_workbook(input_path, output_path, client=client, target_language="fr")
+
+    translated = load_workbook(output_path, data_only=False)
+
+    assert translated.sheetnames == ["Donnees", "Resume"]
+    assert translated["Donnees"]["A1"].value == "Donnees"
+    assert translated["Resume"]["A1"].value == "='Donnees'!A1"
+    assert client.calls == [["Data", "Summary"]]
+    assert stats.sheet_titles_found == 2
+    assert stats.sheet_titles_translated == 2
+    assert stats.unique_strings == 2
+
+
+def test_excluded_sheet_title_is_not_translated(tmp_path):
+    input_path = tmp_path / "input.xlsx"
+    output_path = tmp_path / "output.xlsx"
+
+    workbook = Workbook()
+    keep = workbook.active
+    keep.title = "Keep"
+    skip = workbook.create_sheet("Skip")
+    keep["A1"] = "Hello"
+    skip["A1"] = "Hello"
+    workbook.save(input_path)
+
+    client = MappingTranslationClient({"Keep": "Garder", "Hello": "Bonjour"})
+    stats = translate_workbook(
+        input_path,
+        output_path,
+        client=client,
+        target_language="fr",
+        exclude_sheets=["Skip"],
+    )
+
+    translated = load_workbook(output_path, data_only=False)
+
+    assert translated.sheetnames == ["Garder", "Skip"]
+    assert translated["Garder"]["A1"].value == "Bonjour"
+    assert translated["Skip"]["A1"].value == "Hello"
+    assert stats.sheet_titles_found == 1
+    assert stats.sheet_titles_translated == 1
+
+
+def test_translated_sheet_titles_are_valid_unique_excel_names(tmp_path):
+    input_path = tmp_path / "input.xlsx"
+    output_path = tmp_path / "output.xlsx"
+
+    workbook = Workbook()
+    first = workbook.active
+    first.title = "First"
+    second = workbook.create_sheet("Second")
+    first["A1"] = "A"
+    second["A1"] = "B"
+    workbook.save(input_path)
+
+    long_invalid_name = "Very/Long:Translated*Worksheet?Name With Extra Words"
+    client = MappingTranslationClient(
+        {
+            "First": long_invalid_name,
+            "Second": long_invalid_name,
+            "A": "AA",
+            "B": "BB",
+        }
+    )
+    translate_workbook(input_path, output_path, client=client, target_language="en")
+
+    translated = load_workbook(output_path, data_only=False)
+
+    assert len(translated.sheetnames) == len(set(translated.sheetnames))
+    assert all(len(title) <= 31 for title in translated.sheetnames)
+    assert all(not set(title) & set('\\/*?:[]') for title in translated.sheetnames)
 
 
 class TrackingTranslationClient:
@@ -195,3 +290,19 @@ class TrackingTranslationClient:
         finally:
             with self.lock:
                 self.active -= 1
+
+
+class MappingTranslationClient:
+    def __init__(self, translations: dict[str, str]) -> None:
+        self.translations = translations
+        self.calls: list[list[str]] = []
+
+    def translate_batch(
+        self,
+        texts: list[str],
+        *,
+        source_language: str,
+        target_language: str,
+    ) -> list[str]:
+        self.calls.append(list(texts))
+        return [self.translations.get(text, f"{text} -> {target_language}") for text in texts]

@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tokens-per-minute budget for local throttling.",
     )
     parser.add_argument(
+        "--no-translate-sheet-names",
+        action="store_true",
+        help="Leave worksheet tab names unchanged.",
+    )
+    parser.add_argument(
         "--exclude-sheet",
         "--exlude-sheet",
         action="append",
@@ -126,6 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             concurrency=args.concurrency,
             requests_per_minute=args.rpm,
             tokens_per_minute=args.tpm,
+            translate_sheet_names=not args.no_translate_sheet_names,
             progress=None if args.quiet else stderr_progress,
         )
     except Exception as exc:
@@ -182,6 +188,8 @@ def _format_stats(stats: TranslationStats, *, output: Path) -> str:
         f"Duplicate cells reused from cache: {stats.duplicate_strings_reused}",
         f"Formula cells preserved: {stats.formula_cells_skipped}",
     ]
+    if stats.sheet_titles_found:
+        lines.append(f"Sheet titles translated: {stats.sheet_titles_translated}/{stats.sheet_titles_found}")
     if stats.excluded_sheets:
         lines.append(f"Excluded sheets: {', '.join(stats.excluded_sheets)}")
     if stats.missing_excluded_sheets:

@@ -7,6 +7,7 @@ Translate string cells in `.xlsx` workbooks with an AI provider while preserving
 - Reads and writes `.xlsx` files.
 - Translates all sheets by default.
 - Supports `--exclude-sheet` for sheets that must remain unchanged.
+- Translates worksheet tab names by default.
 - Preserves formulas, numbers, dates, booleans, blank cells, and whitespace-only cells.
 - Translates exact duplicate strings only once per file, then reuses the translated value.
 - Uses LiteLLM so OpenAI works by default and other providers can be plugged in with a model name.
@@ -62,6 +63,12 @@ Exclude one or more sheets:
 translate-xlsx input.xlsx output.xlsx --target en --exclude-sheet "Metadata" --exclude-sheet "Do Not Translate"
 ```
 
+Worksheet tab names are translated by default. Disable that when needed:
+
+```bash
+translate-xlsx input.xlsx output.xlsx --target en --no-translate-sheet-names
+```
+
 Large workbooks are split into batches by both item count and source character count:
 
 ```bash
@@ -99,6 +106,8 @@ Environment variables already set in your shell take priority over values in `.e
 - Duplicate detection is exact: `Hello`, `hello`, and `Hello ` are different strings.
 - The duplicate cache is per workbook run only.
 - Formula cells are loaded with `data_only=False` and left unchanged.
+- Formula references to renamed sheets are updated so sheet links keep working.
+- Translated sheet names are sanitized for Excel's title rules and made unique if necessary.
 - Default throttling is `--concurrency 8 --rpm 500 --tpm 200000`.
 
 ## Tests

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 import threading
 import time
@@ -12,6 +13,10 @@ from typing import Callable, Iterator, Sequence
 from .ai import TranslationClient, TranslationError
 
 
+_INVALID_SHEET_TITLE_CHARS = re.compile(r"[\\/*?:\[\]]")
+_FORMULA_SIMPLE_REF_CHARS = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
+
+
 @dataclass
 class TranslationStats:
     sheets_seen: int = 0
@@ -21,6 +26,8 @@ class TranslationStats:
     cells_scanned: int = 0
     formula_cells_skipped: int = 0
     blank_strings_skipped: int = 0
+    sheet_titles_found: int = 0
+    sheet_titles_translated: int = 0
     string_cells_found: int = 0
     unique_strings: int = 0
     duplicate_strings_reused: int = 0
@@ -45,6 +52,7 @@ def translate_workbook(
     concurrency: int = 8,
     requests_per_minute: int | None = 500,
     tokens_per_minute: int | None = 200_000,
+    translate_sheet_names: bool = True,
     progress: Callable[[int, int], None] | None = None,
 ) -> TranslationStats:
     """Translate string cells in an XLSX workbook and save the translated copy."""
@@ -72,6 +80,7 @@ def translate_workbook(
     )
 
     cells_to_translate: list[_CellText] = []
+    sheet_titles_to_translate: list[tuple[object, str]] = []
     unique_texts: list[str] = []
     translation_cache: dict[str, str | None] = {}
 
@@ -81,6 +90,13 @@ def translate_workbook(
             continue
 
         stats.sheets_translated += 1
+        if translate_sheet_names:
+            stats.sheet_titles_found += 1
+            sheet_titles_to_translate.append((sheet, sheet.title))
+            if sheet.title not in translation_cache:
+                translation_cache[sheet.title] = None
+                unique_texts.append(sheet.title)
+
         for row in sheet.iter_rows():
             for cell in row:
                 stats.cells_scanned += 1
@@ -117,6 +133,15 @@ def translate_workbook(
     for batch, translations in zip(batches, batch_results, strict=True):
         for source, translated in zip(batch, translations, strict=True):
             translation_cache[source] = translated
+
+    if translate_sheet_names:
+        renames = _apply_sheet_title_translations(
+            workbook,
+            sheet_titles_to_translate,
+            translation_cache,
+        )
+        stats.sheet_titles_translated = len(renames)
+        _update_formula_sheet_references(workbook, renames)
 
     for item in cells_to_translate:
         translated = translation_cache[item.text]
@@ -290,6 +315,98 @@ def _estimate_tokens_for_batch(batch: Sequence[str]) -> int:
     json_overhead_chars = 500 + 12 * len(batch)
     estimated_input_tokens = math.ceil((source_chars + json_overhead_chars) / 4)
     return max(1, estimated_input_tokens * 2)
+
+
+def _apply_sheet_title_translations(
+    workbook: object,
+    sheet_titles: Sequence[tuple[object, str]],
+    translation_cache: dict[str, str | None],
+) -> dict[str, str]:
+    if not sheet_titles:
+        return {}
+
+    original_translated_titles = {original for _, original in sheet_titles}
+    used_titles = {
+        title.lower()
+        for title in workbook.sheetnames
+        if title not in original_translated_titles
+    }
+    final_titles: list[tuple[object, str, str]] = []
+    renames: dict[str, str] = {}
+
+    for sheet, original_title in sheet_titles:
+        translated = translation_cache[original_title]
+        if translated is None:
+            raise TranslationError(f"Missing translation for sheet title: {original_title!r}")
+        final_title = _unique_sheet_title(translated, used_titles)
+        final_titles.append((sheet, original_title, final_title))
+        if final_title != original_title:
+            renames[original_title] = final_title
+
+    temp_used_titles = {title.lower() for title in workbook.sheetnames}
+    for index, (sheet, _, _) in enumerate(final_titles, 1):
+        temp_title = _unique_sheet_title(f"__translate_tmp_{index}", temp_used_titles)
+        sheet.title = temp_title
+
+    for sheet, _, final_title in final_titles:
+        sheet.title = final_title
+
+    return renames
+
+
+def _unique_sheet_title(title: str, used_titles: set[str]) -> str:
+    base_title = _clean_sheet_title(title)
+    candidate = base_title[:31].rstrip()
+    counter = 2
+    while candidate.lower() in used_titles:
+        suffix = f" ({counter})"
+        candidate = f"{base_title[: 31 - len(suffix)].rstrip()}{suffix}"
+        counter += 1
+
+    used_titles.add(candidate.lower())
+    return candidate
+
+
+def _clean_sheet_title(title: str) -> str:
+    cleaned = _INVALID_SHEET_TITLE_CHARS.sub(" ", title)
+    cleaned = " ".join(cleaned.split())
+    cleaned = cleaned.strip().strip("'").strip()
+    return cleaned or "Sheet"
+
+
+def _update_formula_sheet_references(workbook: object, renames: dict[str, str]) -> None:
+    if not renames:
+        return
+
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.data_type != "f" or not isinstance(cell.value, str):
+                    continue
+                cell.value = _replace_formula_sheet_references(cell.value, renames)
+
+
+def _replace_formula_sheet_references(formula: str, renames: dict[str, str]) -> str:
+    updated = formula
+    for old_title, new_title in sorted(renames.items(), key=lambda item: len(item[0]), reverse=True):
+        quoted_old = f"'{_escape_formula_sheet_title(old_title)}'!"
+        quoted_new = f"{_formula_sheet_title(new_title)}!"
+        updated = updated.replace(quoted_old, quoted_new)
+
+        if _FORMULA_SIMPLE_REF_CHARS.match(old_title):
+            simple_ref_pattern = re.compile(
+                rf"(?<![A-Za-z0-9_.'\]]){re.escape(old_title)}!"
+            )
+            updated = simple_ref_pattern.sub(quoted_new, updated)
+    return updated
+
+
+def _formula_sheet_title(title: str) -> str:
+    return f"'{_escape_formula_sheet_title(title)}'"
+
+
+def _escape_formula_sheet_title(title: str) -> str:
+    return title.replace("'", "''")
 
 
 def stderr_progress(batch_index: int, batch_count: int) -> None:
